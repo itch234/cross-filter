@@ -33,6 +33,20 @@ const H = require('./harness.cjs');
       const out2 = H.savePng(await H.grid(page, zoom, 3, 720, 480), `matrix_sharp_${version}.png`);
       console.log(`[matrix] sharp: ${out2}`);
     }
+    // v1.2 以降: 光学フィルター箱。なし / ミスト / ハレーション / アナモルフィック / 全部(クロスは強さ 60 のまま)
+    const hasFx = await page.evaluate(() => 'mist' in window.__cf.params());
+    if (hasFx) {
+      const fx = [];
+      const cases = [['フィルターなし(クロスのみ)', {}], ['ブラックミスト 40', { mist: 40 }], ['ハレーション 60', { hal: 60 }],
+                     ['アナモルフィック 60', { ana: 60 }], ['3 つ重ねがけ', { mist: 40, hal: 60, ana: 60 }], ['ミスト 40・クロスなし', { mist: 40, gain: 0 }]];
+      for (const [label, p] of cases) {
+        await page.evaluate(p => window.__cf.set({ gain: 60, thr: 80, mist: 0, hal: 0, ana: 0, ...p }), p);
+        fx.push({ label, dataURL: await page.evaluate(() => window.__cf.snapshot()) });
+      }
+      await page.evaluate(() => window.__cf.set({ gain: 60, mist: 0, hal: 0, ana: 0 }));
+      const out3 = H.savePng(await H.grid(page, fx, 3, 720, 480), `matrix_fx_${version}.png`);
+      console.log(`[matrix] fx: ${out3}`);
+    }
     if (errors.length) { console.log('errors:', errors); process.exitCode = 1; }
   } finally { await close(); }
 })().catch(e => { console.error(e); process.exitCode = 1; }).finally(() => process.exit(process.exitCode || 0));

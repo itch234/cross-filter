@@ -119,6 +119,8 @@ summary::-webkit-details-marker{display:none}
 summary::after{content:"開く";font-size:12.5px;color:var(--muted);font-weight:400}
 details[open] summary::after{content:"閉じる"}
 details .group{padding-top:14px}
+.badge{display:inline-block;margin-left:8px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:700;background:var(--accent);color:var(--accent-ink);vertical-align:1px}
+.badge:empty{display:none}
 .check{display:flex;align-items:center;gap:10px;cursor:pointer}
 .check input{width:18px;height:18px;accent-color:var(--accent)}
 .rail-foot{display:flex;justify-content:flex-end}
@@ -239,6 +241,51 @@ dialog p{margin:0 0 12px;font-size:14px}
         </div>
       </details>
 
+      <details id="fxMist">
+        <summary><span>ブラックミスト<b class="badge" id="mistBadge"></b></span></summary>
+        <div class="group">
+          <div class="ctl">
+            <div class="ctl-head"><label for="mist">強さ</label><output id="mistOut"></output></div>
+            <input type="range" id="mist" min="0" max="100" step="1">
+            <small>光源のまわりをやわらかくにじませ、暗部は締めたままにします。1/4 相当は 40、1/8 相当は 20 が目安</small>
+          </div>
+          <div class="ctl">
+            <div class="ctl-head"><label for="mistR">広がり</label><output id="mistROut"></output></div>
+            <input type="range" id="mistR" min="0" max="100" step="1">
+          </div>
+        </div>
+      </details>
+
+      <details id="fxHal">
+        <summary><span>ハレーション<b class="badge" id="halBadge"></b></span></summary>
+        <div class="group">
+          <div class="ctl">
+            <div class="ctl-head"><label for="hal">強さ</label><output id="halOut"></output></div>
+            <input type="range" id="hal" min="0" max="100" step="1">
+            <small>強い光の縁に赤橙のにじみを足します(CineStill 800T 風)</small>
+          </div>
+          <div class="ctl">
+            <div class="ctl-head"><label for="halR">広がり</label><output id="halROut"></output></div>
+            <input type="range" id="halR" min="0" max="100" step="1">
+          </div>
+        </div>
+      </details>
+
+      <details id="fxAna">
+        <summary><span>アナモルフィック<b class="badge" id="anaBadge"></b></span></summary>
+        <div class="group">
+          <div class="ctl">
+            <div class="ctl-head"><label for="ana">強さ</label><output id="anaOut"></output></div>
+            <input type="range" id="ana" min="0" max="100" step="1">
+            <small>光源から水平に伸びる青い光条。角度リングとは無関係に水平です</small>
+          </div>
+          <div class="ctl">
+            <div class="ctl-head"><label for="anaL">長さ</label><output id="anaLOut"></output></div>
+            <input type="range" id="anaL" min="0" max="100" step="1">
+          </div>
+        </div>
+      </details>
+
       <div class="rail-foot"><button id="reset" class="btn quiet" type="button">初期値に戻す</button></div>
     </section>
   </main>
@@ -278,7 +325,13 @@ const TUNE = {
   lvPow:    3,      // 線形輝度の指数
   haloGain: 0,      // 光源強度の推定(にじみ量/面積)の強さ。0 で無効
   haloMax:  4,
-  haloDiv:  96      // haloLod = log2(長辺/haloDiv)
+  haloDiv:  96,     // haloLod = log2(長辺/haloDiv)
+  // 光学フィルター箱(v1.2)
+  mistThr:  0.60,   // ブラックミストが拾う明るさ(sRGB)。smoothstep(−0.25, +0.10)
+  halThr:   0.85,   // ハレーションが拾う明るさ
+  halTint:  [1.0, 0.32, 0.08],   // ハレーションの色(赤橙)
+  anaTint:  [0.45, 0.65, 1.0],   // アナモルフィックの色(青)
+  anaLod:   1.0     // アナモルフィックの初段で読む lod
 };
 
 const VS = `#version 300 es
@@ -339,6 +392,18 @@ void main(){
   o = vec4(b.rgb*p*I, b.a*p);
 }`;
 
+/* ミストとハレーションの元。rgb = ミスト用の明部(線形色)、a = ハレーション用の強い明部(線形輝度)。ミップで広げて使う */
+const FS_HL = FS_HEAD + `
+uniform sampler2D uSrc; uniform float uMistThr, uHalThr;
+void main(){
+  vec3 s = texture(uSrc, vUv).rgb; vec3 lin = toLin(s);
+  float luma = dot(s, vec3(0.2126,0.7152,0.0722));
+  float v = mix(luma, max3(s), 0.5);
+  float wm = smoothstep(uMistThr - 0.25, uMistThr + 0.10, v);
+  float wh = smoothstep(uHalThr - 0.12, uHalThr + 0.04, v);
+  o = vec4(lin * wm, dot(lin, vec3(0.2126,0.7152,0.0722)) * wh);
+}`;
+
 const FS_STREAK = FS_HEAD + `
 uniform sampler2D uTex; uniform vec2 uStep; uniform vec3 uAtt; uniform float uSrcLod;
 void main(){
@@ -353,13 +418,16 @@ void main(){
 }`;
 
 const FS_COMP = FS_HEAD + `
-uniform sampler2D uSrc, uAccum, uTail, uC;
+uniform sampler2D uSrc, uAccum, uTail, uC, uHl, uAna;
 uniform vec2 uSize; uniform float uN, uGain, uBeta, uCoreLod, uTailLod, uGlow, uGlowLod; uniform int uMode;
-vec3 soft(float lod){
+uniform float uMist, uMistLod, uHal, uHalLod, uAnaAmt, uAnaLod; uniform vec3 uHalTint, uAnaTint;
+vec4 soft4(sampler2D t, float lod){
   vec2 d = exp2(lod)*0.5/uSize;
-  return 0.25*(textureLod(uC, vUv+d, lod).rgb + textureLod(uC, vUv-d, lod).rgb
-             + textureLod(uC, vUv+vec2(d.x,-d.y), lod).rgb + textureLod(uC, vUv+vec2(-d.x,d.y), lod).rgb);
+  return 0.25*(textureLod(t, vUv+d, lod) + textureLod(t, vUv-d, lod)
+             + textureLod(t, vUv+vec2(d.x,-d.y), lod) + textureLod(t, vUv+vec2(-d.x,d.y), lod));
 }
+vec3 soft(float lod){ return soft4(uC, lod).rgb; }
+vec4 spread(sampler2D t, float lod){ return soft4(t, lod)*0.5 + soft4(t, lod+1.0)*0.3 + soft4(t, lod+2.0)*0.2; }
 float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898,78.233)))*43758.5453); }
 void main(){
   vec3 s = texture(uSrc, vUv).rgb;
@@ -370,6 +438,15 @@ void main(){
   vec3 star = core + uBeta*tail;
   vec3 glow = soft(uGlowLod)*0.5 + soft(uGlowLod+1.5)*0.3 + soft(uGlowLod+3.0)*0.2;
   vec3 add = star*uGain + glow*uGlow;
+  // ブラックミスト: 明部を広くやわらかく広げる(暗部はそのまま)
+  if(uMist > 0.0) add += spread(uHl, uMistLod).rgb * uMist;
+  // ハレーション: 強い明部の縁に赤橙のにじみ
+  if(uHal > 0.0) add += uHalTint * spread(uHl, uHalLod).a * uHal;
+  // アナモルフィック: 水平の青い光条(点光源から)
+  if(uAnaAmt > 0.0){
+    vec3 an = max(texture(uAna, vUv).rgb - 2.0*textureLod(uC, vUv, uAnaLod).rgb, 0.0);
+    add += uAnaTint * dot(an, vec3(0.2126,0.7152,0.0722)) * uAnaAmt;
+  }
   float dn = (hash(gl_FragCoord.xy)-0.5)/255.0;
   if(uMode==2){ o = vec4(toSrgb(1.0-exp(-(add+c0)))+dn, 1.0); return; }
   vec3 a = 1.0 - exp(-add);
@@ -390,6 +467,7 @@ class StarRenderer{
     this.pBright = this._prog(vs, FS_BRIGHT);
     this.pLum    = this._prog(vs, FS_LUM);
     this.pWeigh  = this._prog(vs, FS_WEIGH);
+    this.pHl     = this._prog(vs, FS_HL);
     this.pStreak = this._prog(vs, FS_STREAK);
     this.pComp   = this._prog(vs, FS_COMP);
     this.vao = gl.createVertexArray(); gl.bindVertexArray(this.vao);
@@ -477,20 +555,22 @@ class StarRenderer{
     T.ta     = this._tex(hw, hh, 'rgba', false); F.ta    = this._fbo(T.ta);
     T.tb     = this._tex(hw, hh, 'rgba', false); F.tb    = this._fbo(T.tb);
     T.tail   = this._tex(hw, hh, 'rgba', false); F.tail  = this._fbo(T.tail);
+    T.hl     = this._tex(w, h, 'rgba', true);    F.hl    = this._fbo(T.hl);     // ミスト/ハレーションの元
+    T.ana    = this._tex(hw, hh, 'rgba', false); F.ana   = this._fbo(T.ana);    // アナモルフィックの光条
+    gl.bindFramebuffer(gl.FRAMEBUFFER, F.ana); gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
   _bind(unit, t){ const gl = this.gl; gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); }
   _draw(){ this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4); }
-  /* 光条の連鎖。src を srcLod で読み、W×H の解像度で taus(画素単位)の指数減衰を作り、方向ごとに dst へ加算する */
-  _chain(src, srcLod, W, H, taus, ka, kb, kdst, P){
+  /* 光条の連鎖。src を srcLod で読み、W×H の解像度で taus(画素単位)の指数減衰を作り、angles の方向ごとに dst へ加算する */
+  _chain(src, srcLod, W, H, taus, ka, kb, kdst, angles){
     const gl = this.gl, T = this.tex, F = this.fbo, u = this.pStreak.u;
     gl.viewport(0, 0, W, H);
     gl.bindFramebuffer(gl.FRAMEBUFFER, F[kdst]); gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(this.pStreak.p); gl.uniform1i(u.uTex, 0);
     const reach = Math.max(...taus) * Math.log(400);
     const passes = Math.min(4, Math.max(1, Math.ceil(Math.log(reach) / Math.log(8))));
-    for(let k=0; k<P.points; k++){
-      const ang = P.angle + k * 2*Math.PI / P.points;
+    for(const ang of angles){
       const dx = Math.cos(ang), dy = -Math.sin(ang);
       let cur = src;
       for(let p=0; p<passes; p++){
@@ -547,15 +627,38 @@ class StarRenderer{
       // 3. streaks: 芯(full)と裾(half)
       const tau = (0.002 + 0.05 * Math.pow(P.length, 1.6)) * long * P.tune.tauScale;
       const spread = t => [t * (1 + 0.35*P.disp), t, t * (1 - 0.30*P.disp)];
-      this._chain(T.c, coreLod, w, h, spread(tau), 'a', 'b', 'accum', P);
-      this._chain(T.c, tailLod, this.hw, this.hh, spread(tau * P.tune.tailK / 2), 'ta', 'tb', 'tail', P);
+      const angles = Array.from({length: P.points}, (_, k) => P.angle + k * 2*Math.PI / P.points);
+      this._chain(T.c, coreLod, w, h, spread(tau), 'a', 'b', 'accum', angles);
+      this._chain(T.c, tailLod, this.hw, this.hh, spread(tau * P.tune.tailK / 2), 'ta', 'tb', 'tail', angles);
+
+      // 3b. アナモルフィック: 水平 2 方向、半解像度。角度リングとは独立
+      if(P.ana > 0){
+        const ta = (0.005 + 0.12 * Math.pow(P.anaL, 1.6)) * long / 2;
+        this._chain(T.c, P.tune.anaLod, this.hw, this.hh, [ta, ta, ta], 'ta', 'tb', 'ana', [0, Math.PI]);
+      }
+
+      // 5. ミスト/ハレーションの元(どちらかが有効なときだけ)
+      if(P.mist > 0 || P.hal > 0){
+        gl.viewport(0, 0, w, h);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, F.hl);
+        gl.useProgram(this.pHl.p); u = this.pHl.u;
+        this._bind(0, T.src); gl.uniform1i(u.uSrc, 0);
+        gl.uniform1f(u.uMistThr, P.tune.mistThr); gl.uniform1f(u.uHalThr, P.tune.halThr);
+        this._draw();
+        this._bind(0, T.hl); gl.generateMipmap(gl.TEXTURE_2D);
+      }
     }
 
     // 4. composite
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, this.outW, this.outH);
     gl.useProgram(this.pComp.p); const u = this.pComp.u;
-    this._bind(0, T.src); this._bind(1, T.accum); this._bind(2, T.c); this._bind(3, T.tail);
-    gl.uniform1i(u.uSrc, 0); gl.uniform1i(u.uAccum, 1); gl.uniform1i(u.uC, 2); gl.uniform1i(u.uTail, 3);
+    this._bind(0, T.src); this._bind(1, T.accum); this._bind(2, T.c); this._bind(3, T.tail); this._bind(4, T.hl); this._bind(5, T.ana);
+    gl.uniform1i(u.uSrc, 0); gl.uniform1i(u.uAccum, 1); gl.uniform1i(u.uC, 2); gl.uniform1i(u.uTail, 3); gl.uniform1i(u.uHl, 4); gl.uniform1i(u.uAna, 5);
+    // 広がりは長辺比で決める(解像度非依存)。ミスト: 長辺/96〜/12、ハレーション: 長辺/160〜/40
+    gl.uniform1f(u.uMist, P.mist); gl.uniform1f(u.uMistLod, Math.log2(long / (96 - 84*P.mistR)));
+    gl.uniform1f(u.uHal, P.hal);   gl.uniform1f(u.uHalLod, Math.log2(long / (160 - 120*P.halR)));
+    gl.uniform3fv(u.uHalTint, P.tune.halTint);
+    gl.uniform1f(u.uAnaAmt, P.ana / rel); gl.uniform1f(u.uAnaLod, P.tune.anaLod); gl.uniform3fv(u.uAnaTint, P.tune.anaTint);
     gl.uniform2f(u.uSize, w, h); gl.uniform1f(u.uN, P.points);
     gl.uniform1f(u.uGain, P.gain / rel);              // 解像度が変わっても同じ見た目になるよう正規化
     // 裾は半解像度なので和が半分。×2 で β の意味を揃える。シャープさ 50 超では裾も減らす(100 で半分)
@@ -624,7 +727,8 @@ function drawSample(W, H){
 
 /* ---------- 画面側 ---------- */
 const $ = id => document.getElementById(id);
-const DEFAULTS = {points:4, angle:20, length:40, gain:60, sharp:50, thr:80, iso:70, color:60, disp:35, tail:50, glow:20};
+const DEFAULTS = {points:4, angle:20, length:40, gain:60, sharp:50, thr:80, iso:70, color:60, disp:35, tail:50, glow:20,
+                  mist:0, mistR:50, hal:0, halR:50, ana:0, anaL:50};
 const KEY = 'crossfilter.params.v4';   // v3 までは「強さ」のマッピングが違うので読まない
 let params = {...DEFAULTS};
 try{ const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if(s && typeof s === 'object') for(const k in DEFAULTS) if(typeof s[k] === 'number' && isFinite(s[k])) params[k] = s[k]; }catch(e){}
@@ -641,7 +745,10 @@ function shaderParams(m){
     gain: 0.02 * Math.pow(50, params.gain/100),        // 0.02〜1.0
     sharp: params.sharp/100, thr: params.thr/100, iso: params.iso/100,
     color: params.color/100, disp: params.disp/100, tail: 0.6 * params.tail/100,
-    glow: Math.pow(params.glow/100, 2) * 1.5, mode: m, tune: TUNE
+    glow: Math.pow(params.glow/100, 2) * 1.5, mode: m, tune: TUNE,
+    mist: Math.pow(params.mist/100, 1.5) * 1.2, mistR: params.mistR/100,
+    hal:  Math.pow(params.hal/100, 1.3) * 2.0,  halR: params.halR/100,
+    ana:  Math.pow(params.ana/100, 1.3) * 0.6,  anaL: params.anaL/100
   };
 }
 function renderNow(m){ if(renderer) renderer.render(shaderParams(m === undefined ? (holding ? 1 : mode) : m)); }
@@ -795,11 +902,13 @@ function setAngle(a){ params.angle = ((a % 360) + 360) % 360; syncDial(); persis
 })();
 
 /* ---------- スライダー ---------- */
-const SLIDERS = ['length','gain','sharp','thr','iso','color','disp','tail','glow'];
+const SLIDERS = ['length','gain','sharp','thr','iso','color','disp','tail','glow','mist','mistR','hal','halR','ana','anaL'];
+const BADGES = {mist:'mistBadge', hal:'halBadge', ana:'anaBadge'};   // 見出しに有効中の強さを出す
 function syncSlider(id){
   const el = $(id); el.value = params[id];
   el.style.setProperty('--p', ((params[id]-el.min)/(el.max-el.min)*100) + '%');
   $(id+'Out').textContent = Math.round(params[id]);
+  if(BADGES[id]) $(BADGES[id]).textContent = params[id] > 0 ? Math.round(params[id]) : '';
 }
 function syncAll(){
   SLIDERS.forEach(syncSlider);

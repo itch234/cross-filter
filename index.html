@@ -196,6 +196,11 @@ dialog p{margin:0 0 12px;font-size:14px}
           <input type="range" id="gain" min="0" max="100" step="1">
         </div>
         <div class="ctl">
+          <div class="ctl-head"><label for="sharp">シャープさ</label><output id="sharpOut"></output></div>
+          <input type="range" id="sharp" min="0" max="100" step="1">
+          <small>上げるほど光芒が細く鋭くなります</small>
+        </div>
+        <div class="ctl">
           <div class="ctl-head"><label for="thr">光を拾う明るさ</label><output id="thrOut"></output></div>
           <input type="range" id="thr" min="40" max="100" step="1">
           <small>下げるほど、暗めの光にも光条が出ます</small>
@@ -263,8 +268,11 @@ dialog p{margin:0 0 12px;font-size:14px}
 /* 調整用の定数。設計書(DESIGN.md §4)の TUNE。テストから __cf.tune で書き換えられる */
 const TUNE = {
   tauScale: 0.55,   // τ の全体倍率。既定値での白点の可視長が v0(98px)と揃う値(tests/calib.cjs で 103px)
-  coreLod:  0.8,    // 芯の初段で読む lod(断面をわずかに軟らかくして白帯を先細らせる)
-  tailLod:  2.5,    // 裾の初段で読む lod
+  // 芯・裾の初段で読む lod。「シャープさ」s(0〜1)で coreLod = coreLodMax·(1−s)、tailLod = tailLodMax − tailLodRange·s
+  // s=0.5 で v1 当初の値(芯 0.8 / 裾 2.5)。s=1 で芯は無ぼかし(試作版と同じ鋭さ)
+  coreLodMax: 1.6,
+  tailLodMax: 3.5,
+  tailLodRange: 2.0,
   tailK:    3.5,    // 裾の τ 倍率
   wPow:     2,      // しきい値重み w の指数
   lvPow:    3,      // 線形輝度の指数
@@ -504,6 +512,7 @@ class StarRenderer{
     const gl = this.gl, T = this.tex, F = this.fbo, w = this.w, h = this.h;
     if(!T.src) return;
     const long = Math.max(w, h), rel = long / 1440;
+    const coreLod = P.tune.coreLodMax * (1 - P.sharp), tailLod = P.tune.tailLodMax - P.tune.tailLodRange * P.sharp;
     gl.bindVertexArray(this.vao); gl.disable(gl.BLEND);
 
     if(P.mode !== 1){
@@ -538,8 +547,8 @@ class StarRenderer{
       // 3. streaks: 芯(full)と裾(half)
       const tau = (0.002 + 0.05 * Math.pow(P.length, 1.6)) * long * P.tune.tauScale;
       const spread = t => [t * (1 + 0.35*P.disp), t, t * (1 - 0.30*P.disp)];
-      this._chain(T.c, P.tune.coreLod, w, h, spread(tau), 'a', 'b', 'accum', P);
-      this._chain(T.c, P.tune.tailLod, this.hw, this.hh, spread(tau * P.tune.tailK / 2), 'ta', 'tb', 'tail', P);
+      this._chain(T.c, coreLod, w, h, spread(tau), 'a', 'b', 'accum', P);
+      this._chain(T.c, tailLod, this.hw, this.hh, spread(tau * P.tune.tailK / 2), 'ta', 'tb', 'tail', P);
     }
 
     // 4. composite
@@ -549,8 +558,9 @@ class StarRenderer{
     gl.uniform1i(u.uSrc, 0); gl.uniform1i(u.uAccum, 1); gl.uniform1i(u.uC, 2); gl.uniform1i(u.uTail, 3);
     gl.uniform2f(u.uSize, w, h); gl.uniform1f(u.uN, P.points);
     gl.uniform1f(u.uGain, P.gain / rel);              // 解像度が変わっても同じ見た目になるよう正規化
-    gl.uniform1f(u.uBeta, P.tail * 2.0);              // 裾は半解像度なので和が半分。×2 で β の意味を揃える
-    gl.uniform1f(u.uCoreLod, P.tune.coreLod); gl.uniform1f(u.uTailLod, P.tune.tailLod);
+    // 裾は半解像度なので和が半分。×2 で β の意味を揃える。シャープさ 50 超では裾も減らす(100 で半分)
+    gl.uniform1f(u.uBeta, P.tail * 2.0 * (1 - 0.5 * Math.max(0, 2*P.sharp - 1)));
+    gl.uniform1f(u.uCoreLod, coreLod); gl.uniform1f(u.uTailLod, tailLod);
     gl.uniform1f(u.uGlow, P.glow); gl.uniform1f(u.uGlowLod, 2.0 + Math.log2(rel));
     gl.uniform1i(u.uMode, P.mode);
     this._draw();
@@ -614,7 +624,7 @@ function drawSample(W, H){
 
 /* ---------- 画面側 ---------- */
 const $ = id => document.getElementById(id);
-const DEFAULTS = {points:4, angle:20, length:40, gain:60, thr:80, iso:70, color:60, disp:35, tail:50, glow:20};
+const DEFAULTS = {points:4, angle:20, length:40, gain:60, sharp:50, thr:80, iso:70, color:60, disp:35, tail:50, glow:20};
 const KEY = 'crossfilter.params.v4';   // v3 までは「強さ」のマッピングが違うので読まない
 let params = {...DEFAULTS};
 try{ const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if(s && typeof s === 'object') for(const k in DEFAULTS) if(typeof s[k] === 'number' && isFinite(s[k])) params[k] = s[k]; }catch(e){}
@@ -629,7 +639,7 @@ function shaderParams(m){
   return {
     points: params.points, angle: params.angle * Math.PI/180, length: params.length/100,
     gain: 0.02 * Math.pow(50, params.gain/100),        // 0.02〜1.0
-    thr: params.thr/100, iso: params.iso/100,
+    sharp: params.sharp/100, thr: params.thr/100, iso: params.iso/100,
     color: params.color/100, disp: params.disp/100, tail: 0.6 * params.tail/100,
     glow: Math.pow(params.glow/100, 2) * 1.5, mode: m, tune: TUNE
   };
@@ -785,7 +795,7 @@ function setAngle(a){ params.angle = ((a % 360) + 360) % 360; syncDial(); persis
 })();
 
 /* ---------- スライダー ---------- */
-const SLIDERS = ['length','gain','thr','iso','color','disp','tail','glow'];
+const SLIDERS = ['length','gain','sharp','thr','iso','color','disp','tail','glow'];
 function syncSlider(id){
   const el = $(id); el.value = params[id];
   el.style.setProperty('--p', ((params[id]-el.min)/(el.max-el.min)*100) + '%');

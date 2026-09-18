@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>クロスフィルター</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* 写真の色を正しく判断できるよう、面はすべて無彩色。差し色はナトリウム灯の橙だけ。 */
+:root{
+  --bg:#d3d2ce; --panel:#e2e1dd; --well:#c4c3bf; --line:#b3b2ad;
+  --text:#1e1f21; --muted:#5a5954; --accent:#8a5600; --accent-ink:#fff8ea;
+  --ring:#2a2b2e; --glass:#15161a; --ray:#f3c46a;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#1a1b1d; --panel:#222326; --well:#121315; --line:#36383c;
+    --text:#e7e5e0; --muted:#9b9993; --accent:#f0b64a; --accent-ink:#1a1b1d;
+    --ring:#3a3c41; --glass:#0c0d10; --ray:#f3c46a;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#1a1b1d; --panel:#222326; --well:#121315; --line:#36383c;
+  --text:#e7e5e0; --muted:#9b9993; --accent:#f0b64a; --accent-ink:#1a1b1d;
+  --ring:#3a3c41; --glass:#0c0d10; --ray:#f3c46a;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--bg); color:var(--text);
+  font-family:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP","Yu Gothic UI",system-ui,sans-serif;
+  font-size:15px; line-height:1.6; font-feature-settings:"palt";
+}
+button,input{font:inherit;color:inherit}
+.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+
+.app{max-width:1320px;margin:0 auto;padding:0 16px calc(28px + env(safe-area-inset-bottom))}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0 12px}
+.brand{min-width:0}
+.brand h1{font-size:19px;font-weight:700;letter-spacing:.04em;margin:0;line-height:1.3;white-space:nowrap}
+.brand p{margin:0;font-size:12.5px;color:var(--muted)}
+@media (max-width:520px){.brand p{display:none}.brand h1{font-size:17px}.btn{padding:0 14px}}
+.bar-actions{display:flex;gap:8px;flex:none}
+
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:0 16px;
+  border:1px solid var(--line);border-radius:999px;background:var(--panel);cursor:pointer;
+  font-weight:500;font-size:14px;white-space:nowrap;user-select:none;-webkit-user-select:none;
+}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
+.btn.quiet{background:transparent}
+.btn[disabled]{opacity:.5;cursor:default}
+.btn:focus-visible,input:focus-visible+.btn,.dial:focus-visible,summary:focus-visible,.seg input:focus-visible+span{
+  outline:2px solid var(--accent);outline-offset:2px
+}
+
+.work{display:grid;gap:14px}
+.stage{position:sticky;top:0;z-index:5;background:var(--bg);padding-bottom:8px}
+.frame{
+  background:var(--well);border-radius:6px;display:grid;place-items:center;overflow:hidden;
+  min-height:180px;touch-action:pan-y;-webkit-touch-callout:none;user-select:none;-webkit-user-select:none;
+}
+.frame.drop{outline:2px dashed var(--accent);outline-offset:-6px}
+#view{display:block;max-width:100%;max-height:44vh;width:auto;height:auto}
+.stage-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:8px}
+#status{margin:0;font-size:12.5px;color:var(--muted);min-height:1.6em}
+#status.err{color:var(--text);font-weight:500}
+
+.rail{display:grid;gap:18px}
+.top-controls{display:flex;align-items:center;gap:20px}
+.dial{width:132px;height:132px;flex:none;border-radius:50%;cursor:grab;touch-action:none;display:block}
+.dial:active{cursor:grabbing}
+.dial-side{display:grid;gap:12px;min-width:0}
+.readout{font-size:13px;color:var(--muted)}
+.readout b{font-size:22px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums;margin-left:6px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--panel)}
+.seg label{position:relative;cursor:pointer}
+.seg input{position:absolute;opacity:0;inset:0}
+.seg span{display:block;padding:7px 16px;font-size:14px;font-variant-numeric:tabular-nums}
+.seg input:checked+span{background:var(--text);color:var(--bg);font-weight:700}
+.seg-title{font-size:13px;color:var(--muted);margin-bottom:4px}
+
+.ctl{display:grid;gap:2px}
+.ctl-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.ctl-head label{font-weight:500}
+.ctl-head output{font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px}
+.ctl small{color:var(--muted);font-size:12px;line-height:1.5}
+.ends{display:flex;justify-content:space-between;color:var(--muted);font-size:12px}
+input[type=range]{
+  -webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0;cursor:pointer;
+  --p:50%;
+}
+input[type=range]::-webkit-slider-runnable-track{
+  height:4px;border-radius:2px;
+  background:linear-gradient(to right,var(--accent) var(--p),var(--line) var(--p));
+}
+input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:var(--line)}
+input[type=range]::-moz-range-progress{height:4px;border-radius:2px;background:var(--accent)}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:22px;height:22px;border-radius:50%;margin-top:-9px;
+  background:var(--text);border:3px solid var(--bg);box-shadow:0 0 0 1px var(--line);
+}
+input[type=range]::-moz-range-thumb{
+  width:16px;height:16px;border-radius:50%;background:var(--text);border:3px solid var(--bg);box-shadow:0 0 0 1px var(--line);
+}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 2px var(--accent)}
+input[type=range]:focus-visible::-moz-range-thumb{box-shadow:0 0 0 2px var(--accent)}
+
+.group{display:grid;gap:14px}
+details{border-top:1px solid var(--line);padding-top:12px}
+summary{cursor:pointer;font-weight:500;list-style:none;display:flex;justify-content:space-between;align-items:center;border-radius:4px}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"開く";font-size:12.5px;color:var(--muted);font-weight:400}
+details[open] summary::after{content:"閉じる"}
+details .group{padding-top:14px}
+.check{display:flex;align-items:center;gap:10px;cursor:pointer}
+.check input{width:18px;height:18px;accent-color:var(--accent)}
+.rail-foot{display:flex;justify-content:flex-end}
+
+dialog{border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text);padding:16px;max-width:min(92vw,720px)}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+dialog img{display:block;max-width:100%;max-height:60vh;margin:0 auto 12px;border-radius:4px}
+dialog p{margin:0 0 12px;font-size:14px}
+.dlg-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+
+@media (min-width:900px){
+  .work{grid-template-columns:minmax(0,1fr) 360px;gap:28px;align-items:start}
+  .stage{top:12px;padding-bottom:0}
+  #view{max-height:calc(100vh - 150px)}
+  .frame{min-height:420px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <h1>クロスフィルター</h1>
+      <p>写真の光源に光条を足します</p>
+    </div>
+    <div class="bar-actions">
+      <input id="file" type="file" accept="image/*" class="visually-hidden">
+      <label class="btn" for="file">写真を選ぶ</label>
+      <button id="save" class="btn primary" type="button">保存する</button>
+    </div>
+  </header>
+
+  <main class="work">
+    <section class="stage" aria-label="プレビュー">
+      <div class="frame" id="frame"><canvas id="view" width="1440" height="960"></canvas></div>
+      <div class="stage-foot">
+        <p id="status" role="status" aria-live="polite"></p>
+        <button id="hold" class="btn quiet" type="button">長押しで元の写真</button>
+      </div>
+    </section>
+
+    <section class="rail" aria-label="調整">
+      <div class="top-controls">
+        <svg class="dial" id="dial" viewBox="-66 -66 132 132" tabindex="0" role="slider"
+             aria-label="光条の角度" aria-valuemin="0" aria-valuemax="359" aria-valuenow="20">
+          <circle r="64" fill="var(--ring)"/>
+          <g id="dialRot">
+            <g id="knurl" stroke="var(--bg)" stroke-width="1.6" opacity=".55"></g>
+            <circle r="50" fill="var(--glass)"/>
+            <g id="rays" fill="var(--ray)"></g>
+            <circle r="3.2" fill="#fff"/>
+            <circle cx="0" cy="-57.5" r="3" fill="var(--ray)"/>
+          </g>
+        </svg>
+        <div class="dial-side">
+          <div class="readout">角度<b id="angOut">20°</b></div>
+          <div>
+            <div class="seg-title" id="ptsTitle">光条の数</div>
+            <div class="seg" role="radiogroup" aria-labelledby="ptsTitle">
+              <label><input type="radio" name="pts" value="4" checked><span>4</span></label>
+              <label><input type="radio" name="pts" value="6"><span>6</span></label>
+              <label><input type="radio" name="pts" value="8"><span>8</span></label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="ctl">
+          <div class="ctl-head"><label for="length">長さ</label><output id="lengthOut"></output></div>
+          <input type="range" id="length" min="0" max="100" step="1">
+        </div>
+        <div class="ctl">
+          <div class="ctl-head"><label for="gain">強さ</label><output id="gainOut"></output></div>
+          <input type="range" id="gain" min="0" max="100" step="1">
+        </div>
+        <div class="ctl">
+          <div class="ctl-head"><label for="thr">光を拾う明るさ</label><output id="thrOut"></output></div>
+          <input type="range" id="thr" min="40" max="100" step="1">
+          <small>下げるほど、暗めの光にも光条が出ます</small>
+        </div>
+      </div>
+
+      <details id="fine">
+        <summary>こまかい調整</summary>
+        <div class="group">
+          <div class="ctl">
+            <div class="ctl-head"><label for="iso">点光源だけにする</label><output id="isoOut"></output></div>
+            <input type="range" id="iso" min="0" max="100" step="1">
+            <small>空や白い壁、看板など、広く明るい面を外します</small>
+          </div>
+          <div class="ctl">
+            <div class="ctl-head"><label for="color">光条の色</label><output id="colorOut"></output></div>
+            <input type="range" id="color" min="0" max="100" step="1">
+            <div class="ends"><span>白</span><span>光源の色</span></div>
+          </div>
+          <div class="ctl">
+            <div class="ctl-head"><label for="disp">虹色</label><output id="dispOut"></output></div>
+            <input type="range" id="disp" min="0" max="100" step="1">
+            <small>先端に向かって色を分けます</small>
+          </div>
+          <div class="ctl">
+            <div class="ctl-head"><label for="glow">にじみ</label><output id="glowOut"></output></div>
+            <input type="range" id="glow" min="0" max="100" step="1">
+            <small>光源のまわりのやわらかい光</small>
+          </div>
+          <label class="check"><input type="checkbox" id="mask"><span>拾っている光だけを表示</span></label>
+        </div>
+      </details>
+
+      <div class="rail-foot"><button id="reset" class="btn quiet" type="button">初期値に戻す</button></div>
+    </section>
+  </main>
+</div>
+
+<dialog id="result" aria-labelledby="resTitle">
+  <p id="resTitle">画像を長押し、または下のボタンから保存してください。</p>
+  <img id="resImg" alt="加工後の写真">
+  <div class="dlg-actions">
+    <a id="resLink" class="btn" download>ファイルとして保存</a>
+    <button id="resClose" class="btn primary" type="button">閉じる</button>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+/* ============================================================
+   光条の作り方
+   1. 明るい部分だけ抜き出す(bright)
+   2. 広い明部を外して点光源だけ残す(isolate)
+   3. 方向ごとに、減衰させながら引き伸ばす(streak。8タップ×数パスで指数減衰の線になる)
+   4. 元写真にリニア空間でスクリーン合成(composite)
+   ============================================================ */
+
+const VS = `#version 300 es
+layout(location=0) in vec2 aPos; out vec2 vUv;
+void main(){ vUv = aPos*0.5+0.5; gl_Position = vec4(aPos,0.0,1.0); }`;
+
+const FS_HEAD = `#version 300 es
+precision highp float; precision highp sampler2D;
+in vec2 vUv; out vec4 o;
+vec3 toLin(vec3 c){ return pow(max(c,0.0), vec3(2.2)); }
+vec3 toSrgb(vec3 c){ return pow(clamp(c,0.0,1.0), vec3(1.0/2.2)); }
+float max3(vec3 c){ return max(c.r, max(c.g, c.b)); }
+`;
+
+const FS_BRIGHT = FS_HEAD + `
+uniform sampler2D uSrc; uniform float uThr, uKnee, uColor, uHaloLod;
+void main(){
+  vec3 s = texture(uSrc, vUv).rgb;
+  float luma = dot(s, vec3(0.2126,0.7152,0.0722));
+  float v = mix(luma, max3(s), 0.75);           // 赤いテールランプのような色つきの光も拾う
+  float w = smoothstep(uThr-uKnee, uThr+uKnee, v);
+  vec3 lin = toLin(s);
+  float lv = max3(lin);
+  vec3 halo = toLin(textureLod(uSrc, vUv, uHaloLod).rgb);   // 白飛びした芯の周囲から光源の色を推定
+  vec3 chroma = pow(halo / max(max3(halo), 1e-4), vec3(1.6));
+  vec3 c = uColor < 0.5 ? mix(vec3(lv), lin, uColor*2.0) : mix(lin, chroma*lv, (uColor-0.5)*2.0);
+  o = vec4(c*w, w);
+}`;
+
+const FS_ISO = FS_HEAD + `
+uniform sampler2D uBright; uniform float uLod, uIso;
+void main(){
+  vec4 b = texture(uBright, vUv);
+  float f = max(textureLod(uBright, vUv, uLod).a*0.5, textureLod(uBright, vUv, uLod+1.5).a);
+  float hi = 2.5*pow(0.048, uIso), lo = hi*0.4;          // iso=0で無効、1で最も厳しい
+  float p = 1.0 - smoothstep(lo, hi, f);
+  o = vec4(b.rgb*p, b.a*p);
+}`;
+
+const FS_STREAK = FS_HEAD + `
+uniform sampler2D uTex; uniform vec2 uStep; uniform vec3 uAtt;
+void main(){
+  vec3 acc = vec3(0.0); vec3 w = vec3(1.0);
+  for(int s=0; s<8; s++){
+    vec2 uv = vUv - uStep*float(s);
+    float inb = step(0.0,uv.x)*step(uv.x,1.0)*step(0.0,uv.y)*step(uv.y,1.0);
+    acc += texture(uTex, uv).rgb * w * inb;
+    w *= uAtt;
+  }
+  o = vec4(acc, 1.0);
+}`;
+
+const FS_COMP = FS_HEAD + `
+uniform sampler2D uSrc, uAccum, uC;
+uniform vec2 uSize; uniform float uN, uGain, uGlow, uGlowLod; uniform int uMode;
+vec3 soft(float lod){
+  vec2 d = exp2(lod)*0.5/uSize;
+  return 0.25*(textureLod(uC, vUv+d, lod).rgb + textureLod(uC, vUv-d, lod).rgb
+             + textureLod(uC, vUv+vec2(d.x,-d.y), lod).rgb + textureLod(uC, vUv+vec2(-d.x,d.y), lod).rgb);
+}
+float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898,78.233)))*43758.5453); }
+void main(){
+  vec3 s = texture(uSrc, vUv).rgb;
+  if(uMode==1){ o = vec4(s,1.0); return; }
+  vec3 c0 = texture(uC, vUv).rgb;
+  vec3 star = max(texture(uAccum, vUv).rgb - uN*c0, 0.0);
+  vec3 glow = soft(uGlowLod)*0.5 + soft(uGlowLod+1.5)*0.3 + soft(uGlowLod+3.0)*0.2;
+  vec3 add = star*uGain + glow*uGlow;
+  float dn = (hash(gl_FragCoord.xy)-0.5)/255.0;
+  if(uMode==2){ o = vec4(toSrgb(1.0-exp(-(add+c0)))+dn, 1.0); return; }
+  vec3 a = 1.0 - exp(-add);
+  vec3 r = 1.0 - (1.0-toLin(s))*(1.0-a);
+  o = vec4(max3(add) < 1e-5 ? s : toSrgb(r)+dn, 1.0);
+}`;
+
+class StarRenderer{
+  constructor(canvas){
+    this.canvas = canvas;
+    const gl = canvas.getContext('webgl2', {alpha:false, antialias:false, premultipliedAlpha:false, preserveDrawingBuffer:true, powerPreference:'high-performance'});
+    if(!gl) throw new Error('nowebgl2');
+    this.gl = gl;
+    this.maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    const vs = this._shader(gl.VERTEX_SHADER, VS);
+    this.pBright = this._prog(vs, FS_BRIGHT);
+    this.pIso    = this._prog(vs, FS_ISO);
+    this.pStreak = this._prog(vs, FS_STREAK);
+    this.pComp   = this._prog(vs, FS_COMP);
+    this.vao = gl.createVertexArray(); gl.bindVertexArray(this.vao);
+    const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    this.float = this._probeFloat();
+    this.tex = {}; this.fbo = {};
+  }
+  _shader(type, src){
+    const gl = this.gl, sh = gl.createShader(type);
+    gl.shaderSource(sh, src); gl.compileShader(sh);
+    if(!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error('shader: ' + gl.getShaderInfoLog(sh));
+    return sh;
+  }
+  _prog(vs, fsSrc){
+    const gl = this.gl, p = gl.createProgram();
+    gl.attachShader(p, vs); gl.attachShader(p, this._shader(gl.FRAGMENT_SHADER, fsSrc));
+    gl.bindAttribLocation(p, 0, 'aPos'); gl.linkProgram(p);
+    if(!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('link: ' + gl.getProgramInfoLog(p));
+    const u = {}, n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+    for(let i=0;i<n;i++){ const info = gl.getActiveUniform(p, i); u[info.name] = gl.getUniformLocation(p, info.name); }
+    return {p, u};
+  }
+  _probeFloat(){
+    const gl = this.gl;
+    if(!gl.getExtension('EXT_color_buffer_float') && !gl.getExtension('EXT_color_buffer_half_float')) return false;
+    const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texStorage2D(gl.TEXTURE_2D, 3, gl.RGBA16F, 4, 4);
+    const f = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+    let ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    while(gl.getError() !== gl.NO_ERROR){}
+    if(ok){ gl.generateMipmap(gl.TEXTURE_2D); ok = gl.getError() === gl.NO_ERROR; }
+    gl.deleteFramebuffer(f); gl.deleteTexture(t);
+    return ok;
+  }
+  _tex(w, h, float, mips){
+    const gl = this.gl, t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    const levels = mips ? Math.floor(Math.log2(Math.max(w,h))) + 1 : 1;
+    gl.texStorage2D(gl.TEXTURE_2D, levels, float ? gl.RGBA16F : gl.RGBA8, w, h);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, mips ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return t;
+  }
+  _fbo(t){
+    const gl = this.gl, f = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+    if(gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error('fbo');
+    return f;
+  }
+  _free(){
+    const gl = this.gl;
+    for(const k in this.fbo) gl.deleteFramebuffer(this.fbo[k]);
+    for(const k in this.tex) gl.deleteTexture(this.tex[k]);
+    this.tex = {}; this.fbo = {};
+  }
+  /* src: 出力サイズに合わせた2Dキャンバス。workLong: 光条を計算する解像度(長辺)の上限 */
+  setImage(src, workLong){
+    const gl = this.gl; this._free();
+    const W = src.width, H = src.height;
+    this.canvas.width = W; this.canvas.height = H; this.outW = W; this.outH = H;
+    const k = Math.min(1, workLong / Math.max(W, H));
+    const w = this.w = Math.max(2, Math.round(W*k)), h = this.h = Math.max(2, Math.round(H*k));
+    const T = this.tex, F = this.fbo;
+    T.src = this._tex(W, H, false, true);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, src);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    T.bright = this._tex(w, h, this.float, true);  F.bright = this._fbo(T.bright);
+    T.c      = this._tex(w, h, this.float, true);  F.c      = this._fbo(T.c);
+    T.a      = this._tex(w, h, this.float, false); F.a      = this._fbo(T.a);
+    T.b      = this._tex(w, h, this.float, false); F.b      = this._fbo(T.b);
+    T.accum  = this._tex(w, h, this.float, false); F.accum  = this._fbo(T.accum);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+  _bind(unit, t){ const gl = this.gl; gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); }
+  _draw(){ this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4); }
+  render(P){
+    const gl = this.gl, T = this.tex, F = this.fbo, w = this.w, h = this.h;
+    if(!T.src) return;
+    const long = Math.max(w, h), rel = long / 1440;
+    gl.bindVertexArray(this.vao); gl.disable(gl.BLEND);
+
+    if(P.mode !== 1){
+      // 1. bright
+      gl.bindFramebuffer(gl.FRAMEBUFFER, F.bright); gl.viewport(0, 0, w, h);
+      gl.useProgram(this.pBright.p); let u = this.pBright.u;
+      this._bind(0, T.src); gl.uniform1i(u.uSrc, 0);
+      gl.uniform1f(u.uThr, P.thr); gl.uniform1f(u.uKnee, 0.06); gl.uniform1f(u.uColor, P.color);
+      gl.uniform1f(u.uHaloLod, 3.0 + Math.log2(Math.max(this.outW, this.outH) / 1440));
+      this._draw();
+      this._bind(0, T.bright); gl.generateMipmap(gl.TEXTURE_2D);
+
+      // 2. isolate
+      gl.bindFramebuffer(gl.FRAMEBUFFER, F.c);
+      gl.useProgram(this.pIso.p); u = this.pIso.u;
+      this._bind(0, T.bright); gl.uniform1i(u.uBright, 0);
+      gl.uniform1f(u.uLod, Math.log2(long / 48)); gl.uniform1f(u.uIso, P.iso);
+      this._draw();
+      this._bind(0, T.c); gl.generateMipmap(gl.TEXTURE_2D);
+
+      // 3. streaks
+      gl.bindFramebuffer(gl.FRAMEBUFFER, F.accum); gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(this.pStreak.p); u = this.pStreak.u; gl.uniform1i(u.uTex, 0);
+      const tau = (0.002 + 0.05 * Math.pow(P.length, 1.6)) * long;
+      const taus = [tau * (1 + 0.35*P.disp), tau, tau * (1 - 0.30*P.disp)];
+      const reach = Math.max(...taus) * Math.log(400);
+      const passes = Math.min(4, Math.max(1, Math.ceil(Math.log(reach) / Math.log(8))));
+      for(let k=0; k<P.points; k++){
+        const ang = P.angle + k * 2*Math.PI / P.points;
+        const dx = Math.cos(ang), dy = -Math.sin(ang);
+        let src = T.c;
+        for(let p=0; p<passes; p++){
+          const b = Math.pow(8, p), last = p === passes-1;
+          const dst = last ? 'accum' : (p % 2 === 0 ? 'a' : 'b');
+          gl.bindFramebuffer(gl.FRAMEBUFFER, F[dst]);
+          if(last){ gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE); } else gl.disable(gl.BLEND);
+          this._bind(0, src);
+          gl.uniform2f(u.uStep, dx*b/w, dy*b/h);
+          gl.uniform3f(u.uAtt, Math.exp(-b/taus[0]), Math.exp(-b/taus[1]), Math.exp(-b/taus[2]));
+          this._draw();
+          src = T[dst];
+        }
+      }
+      gl.disable(gl.BLEND);
+    }
+
+    // 4. composite
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, this.outW, this.outH);
+    gl.useProgram(this.pComp.p); const u = this.pComp.u;
+    this._bind(0, T.src); this._bind(1, T.accum); this._bind(2, T.c);
+    gl.uniform1i(u.uSrc, 0); gl.uniform1i(u.uAccum, 1); gl.uniform1i(u.uC, 2);
+    gl.uniform2f(u.uSize, w, h); gl.uniform1f(u.uN, P.points);
+    gl.uniform1f(u.uGain, P.gain / rel);              // 解像度が変わっても同じ見た目になるよう正規化
+    gl.uniform1f(u.uGlow, P.glow); gl.uniform1f(u.uGlowLod, 2.0 + Math.log2(rel));
+    gl.uniform1i(u.uMode, P.mode);
+    this._draw();
+  }
+  dispose(){
+    this._free();
+    const ext = this.gl.getExtension('WEBGL_lose_context'); if(ext) ext.loseContext();
+    this.canvas.width = this.canvas.height = 1;
+  }
+}
+
+/* ---------- サンプルの夜景(最初に表示する) ---------- */
+function rng(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+function drawSample(W, H){
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d'), r = rng(7), S = W/1440;
+  let g = x.createLinearGradient(0,0,0,H*0.62);
+  g.addColorStop(0,'#04060d'); g.addColorStop(.6,'#121936'); g.addColorStop(.9,'#3a2b3f'); g.addColorStop(1,'#7a4a2c');
+  x.fillStyle = g; x.fillRect(0,0,W,H);
+  const lamp = (px,py,core,halo,col,hcol)=>{
+    const gr = x.createRadialGradient(px,py,0,px,py,halo);
+    gr.addColorStop(0,hcol); gr.addColorStop(1,'rgba(0,0,0,0)');
+    x.globalCompositeOperation='lighter'; x.fillStyle=gr; x.fillRect(px-halo,py-halo,halo*2,halo*2);
+    x.globalCompositeOperation='source-over'; x.fillStyle=col; x.beginPath(); x.arc(px,py,core,0,7); x.fill();
+  };
+  lamp(W*0.82,H*0.13,11*S,70*S,'#fffbe9','rgba(255,244,210,.3)');                 // 月
+  for(let i=0;i<60;i++){ x.fillStyle=`rgba(255,255,255,${.2+r()*.5})`; x.fillRect(r()*W, r()*H*0.4, 1.4*S, 1.4*S); }
+  const horizon = H*0.62;
+  for(let layer=0; layer<2; layer++){
+    let bx = -20*S;
+    while(bx < W){
+      const bw = (50+r()*90)*S, bh = (90+r()*260)*S*(layer?1:.7), top = horizon-bh;
+      x.fillStyle = layer ? '#070910' : '#0d1120'; x.fillRect(bx, top, bw, bh+2);
+      for(let wy=top+10*S; wy<horizon-8*S; wy+=11*S) for(let wx=bx+6*S; wx<bx+bw-8*S; wx+=9*S){
+        const q = r(); if(q<.62) continue;
+        x.fillStyle = q>.992 ? '#fff6dc' : `rgba(255,${190+r()*40|0},${120+r()*60|0},${.18+r()*.4})`;
+        x.fillRect(wx, wy, 4*S, 5.5*S);
+      }
+      if(layer && r()>.55) lamp(bx+bw/2, top-3*S, 2.2*S, 16*S, '#ff5a4a', 'rgba(255,60,40,.5)');   // 航空障害灯
+      bx += bw + r()*8*S;
+    }
+  }
+  x.fillStyle='#f3f6ff'; x.fillRect(W*0.12, horizon-210*S, 230*S, 96*S);                // 大きな看板(広い明部)
+  x.fillStyle='#1b2a55'; x.font=`700 ${44*S}px sans-serif`; x.fillText('HOTEL', W*0.12+38*S, horizon-145*S);
+  g = x.createLinearGradient(0,horizon,0,H); g.addColorStop(0,'#0b0d14'); g.addColorStop(1,'#15161c');
+  x.fillStyle = g; x.fillRect(0,horizon,W,H-horizon);
+  for(let i=0;i<9;i++){                                                              // 街灯(遠近)
+    const t = i/8, d = Math.pow(t,1.7);
+    for(const side of [-1,1]){
+      const px = W*0.5 + side*(40+d*640)*S, py = horizon - (20+d*250)*S + 30*S*d;
+      lamp(px, py, (1.2+d*3.6)*S, (18+d*70)*S, '#fffdf3', 'rgba(255,176,74,.5)');
+    }
+  }
+  for(let i=0;i<7;i++){                                                              // 車のライト
+    const t = r(), py = horizon + (18 + t*t*300)*S, sc = (.4+t*1.3)*S, px = W*0.5 + (r()-.5)*(80+t*700)*S;
+    const head = r()>.5, col = head ? '#ffffff' : '#ff3b30', hcol = head ? 'rgba(210,225,255,.5)' : 'rgba(255,40,30,.55)';
+    lamp(px-9*sc, py, 2.6*sc, 20*sc, col, hcol); lamp(px+9*sc, py, 2.6*sc, 20*sc, col, hcol);
+  }
+  return c;
+}
+
+/* ---------- 画面側 ---------- */
+const $ = id => document.getElementById(id);
+const DEFAULTS = {points:4, angle:20, length:40, gain:45, thr:80, iso:70, color:60, disp:35, glow:20};
+const KEY = 'crossfilter.params.v3';
+let params = {...DEFAULTS};
+try{ const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if(s && typeof s === 'object') for(const k in DEFAULTS) if(typeof s[k] === 'number' && isFinite(s[k])) params[k] = s[k]; }catch(e){}
+if(![4,6,8].includes(params.points)) params.points = 4;
+
+let source = {kind:'sample', name:'sample'};
+let mode = 0, holding = false, renderer = null, raf = 0, busy = false, downloads = null;
+const PREVIEW_LONG = 1440;
+
+function status(msg, err){ const el = $('status'); el.textContent = msg || ''; el.classList.toggle('err', !!err); }
+function shaderParams(m){
+  return {
+    points: params.points, angle: params.angle * Math.PI/180, length: params.length/100,
+    gain: 0.03 * Math.pow(100, params.gain/100), thr: params.thr/100, iso: params.iso/100,
+    color: params.color/100, disp: params.disp/100, glow: Math.pow(params.glow/100, 2) * 1.5, mode: m
+  };
+}
+function schedule(){
+  if(raf || !renderer) return;
+  raf = requestAnimationFrame(()=>{ raf = 0; try{ renderer.render(shaderParams(holding ? 1 : mode)); }catch(e){ status('描画に失敗しました: ' + e.message, true); } });
+}
+function persist(){ try{ localStorage.setItem(KEY, JSON.stringify(params)); }catch(e){} }
+
+function fit(w, h, maxLong, maxArea){
+  let k = Math.min(1, maxLong / Math.max(w, h));
+  if(maxArea) k = Math.min(k, Math.sqrt(maxArea / (w*h)));
+  return [Math.max(2, Math.round(w*k)), Math.max(2, Math.round(h*k))];
+}
+async function decode(file){
+  try{ return await createImageBitmap(file, {imageOrientation:'from-image'}); }
+  catch(e){
+    return await new Promise((res, rej)=>{
+      const img = new Image(), url = URL.createObjectURL(file);
+      img.onload = ()=>{ URL.revokeObjectURL(url); res(img); };
+      img.onerror = ()=>{ URL.revokeObjectURL(url); rej(new Error('decode')); };
+      img.src = url;
+    });
+  }
+}
+/* 指定サイズの2Dキャンバスに元画像を描く。戻り値は {canvas, fullW, fullH} */
+async function rasterize(maxLong, maxArea){
+  if(source.kind === 'sample'){
+    const [w, h] = fit(1800, 1200, maxLong, maxArea);
+    return {canvas: drawSample(w, h), fullW:1800, fullH:1200};
+  }
+  const img = await decode(source.file);
+  const fw = img.width || img.naturalWidth, fh = img.height || img.naturalHeight;
+  const [w, h] = fit(fw, fh, maxLong, maxArea);
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(img, 0, 0, w, h);
+  if(img.close) img.close();
+  return {canvas:c, fullW:fw, fullH:fh};
+}
+async function showSource(){
+  busy = true; $('save').disabled = true;
+  try{
+    const {canvas, fullW, fullH} = await rasterize(PREVIEW_LONG);
+    renderer.setImage(canvas, PREVIEW_LONG);
+    canvas.width = canvas.height = 1;
+    source.fullW = fullW; source.fullH = fullH;
+    renderer.render(shaderParams(mode));
+    status(source.kind === 'sample' ? 'サンプルの夜景です。写真を選んでください。' : `${source.name}(${fullW}×${fullH})`);
+  }catch(e){
+    status('この画像は読み込めませんでした。JPEGかPNGで試してください。', true);
+  }
+  busy = false; $('save').disabled = false;
+}
+
+/* 書き出し本体。テストフックからも呼ぶので保存UIと分けてある(__cf 追加時に分離) */
+async function renderExport(type, quality){
+  let blob = null, dims = null;
+  // 端末のキャンバス上限に収める。失敗したら半分のサイズでもう一度だけ試す
+  for(const scale of [1, 0.5]){
+    let ex = null, out = document.createElement('canvas');
+    try{
+      ex = new StarRenderer(out);
+      const maxLong = Math.min(ex.maxTex, 8192) * scale, maxArea = 16000000 * scale * scale;
+      const {canvas} = await rasterize(maxLong, maxArea);
+      ex.setImage(canvas, 2048);
+      dims = [canvas.width, canvas.height];
+      canvas.width = canvas.height = 1;
+      ex.render(shaderParams(mode));
+      if(ex.gl.isContextLost()) throw new Error('lost');
+      blob = await new Promise(res => out.toBlob(res, type, quality));
+    }catch(e){ blob = null; }
+    if(ex) try{ ex.dispose(); }catch(e){}
+    if(blob) break;
+  }
+  return {blob, dims};
+}
+async function exportImage(){
+  if(busy) return; busy = true; $('save').disabled = true; status('書き出しています…');
+  await new Promise(r => setTimeout(r, 30));
+  const {blob, dims} = await renderExport('image/jpeg', 0.95);
+  if(!blob){ status('書き出せませんでした。ほかのタブやアプリを閉じてから、もう一度試してください。', true); busy = false; $('save').disabled = false; return; }
+
+  const base = (source.name || 'photo').replace(/\.[^.]+$/, '');
+  const filename = `${base}_cross${params.points}.jpg`;
+  let saved = false;
+  if(downloads){
+    try{ await downloads.save({filename, data: blob}); saved = true; status(`保存しました(${dims[0]}×${dims[1]})`); }
+    catch(e){
+      if(e && e.code === 'declined'){ status('保存をやめました。'); saved = true; }
+      else if(e && e.code === 'rate_limited'){ status('保存の確認がすでに開いています。少し待ってからもう一度押してください。', true); saved = true; }
+    }
+  }
+  if(!saved){
+    const url = URL.createObjectURL(blob);
+    $('resImg').src = url; $('resLink').href = url; $('resLink').download = filename;
+    const dlg = $('result');
+    dlg.addEventListener('close', ()=> URL.revokeObjectURL(url), {once:true});
+    dlg.showModal(); status(`書き出しました(${dims[0]}×${dims[1]})`);
+  }
+  busy = false; $('save').disabled = false;
+}
+
+/* ---------- ダイヤル(フィルター枠を回す) ---------- */
+function buildDial(){
+  const NS = 'http://www.w3.org/2000/svg', kn = $('knurl');
+  for(let a=0; a<360; a+=6){
+    const l = document.createElementNS(NS, 'line'), r = a*Math.PI/180;
+    l.setAttribute('x1', 52.5*Math.cos(r)); l.setAttribute('y1', 52.5*Math.sin(r));
+    l.setAttribute('x2', 62.5*Math.cos(r)); l.setAttribute('y2', 62.5*Math.sin(r));
+    kn.appendChild(l);
+  }
+}
+function drawRays(){
+  const NS = 'http://www.w3.org/2000/svg', g = $('rays'); g.textContent = '';
+  for(let k=0; k<params.points; k++){
+    const p = document.createElementNS(NS, 'polygon');
+    p.setAttribute('points', '0,-1.9 44,0 0,1.9');
+    p.setAttribute('transform', `rotate(${k*360/params.points})`);
+    g.appendChild(p);
+  }
+}
+function syncDial(){
+  $('dialRot').setAttribute('transform', `rotate(${params.angle})`);
+  const period = 360/params.points, shown = Math.round(((params.angle % period) + period) % period);
+  $('angOut').textContent = (shown === Math.round(period) ? 0 : shown) + '°';
+  $('dial').setAttribute('aria-valuenow', Math.round(params.angle));
+}
+function setAngle(a){ params.angle = ((a % 360) + 360) % 360; syncDial(); persist(); schedule(); }
+(function dialEvents(){
+  const d = $('dial'); let last = null;
+  const ang = e => { const b = d.getBoundingClientRect(); return Math.atan2(e.clientY - (b.top+b.height/2), e.clientX - (b.left+b.width/2)) * 180/Math.PI; };
+  d.addEventListener('pointerdown', e => { d.setPointerCapture(e.pointerId); last = ang(e); e.preventDefault(); d.focus(); });
+  d.addEventListener('pointermove', e => { if(last === null) return; const a = ang(e); let dl = a - last; if(dl > 180) dl -= 360; if(dl < -180) dl += 360; last = a; setAngle(params.angle + dl); });
+  const end = () => { last = null; };
+  d.addEventListener('pointerup', end); d.addEventListener('pointercancel', end);
+  d.addEventListener('keydown', e => {
+    const step = e.shiftKey ? 5 : 1;
+    if(e.key === 'ArrowRight' || e.key === 'ArrowUp'){ setAngle(params.angle + step); e.preventDefault(); }
+    if(e.key === 'ArrowLeft' || e.key === 'ArrowDown'){ setAngle(params.angle - step); e.preventDefault(); }
+  });
+})();
+
+/* ---------- スライダー ---------- */
+const SLIDERS = ['length','gain','thr','iso','color','disp','glow'];
+function syncSlider(id){
+  const el = $(id); el.value = params[id];
+  el.style.setProperty('--p', ((params[id]-el.min)/(el.max-el.min)*100) + '%');
+  $(id+'Out').textContent = Math.round(params[id]);
+}
+function syncAll(){
+  SLIDERS.forEach(syncSlider);
+  document.querySelectorAll('input[name=pts]').forEach(r => { r.checked = +r.value === params.points; });
+  drawRays(); syncDial();
+}
+SLIDERS.forEach(id => $(id).addEventListener('input', e => { params[id] = +e.target.value; syncSlider(id); persist(); schedule(); }));
+document.querySelectorAll('input[name=pts]').forEach(r => r.addEventListener('change', () => { params.points = +r.value; drawRays(); syncDial(); persist(); schedule(); }));
+$('mask').addEventListener('change', e => { mode = e.target.checked ? 2 : 0; schedule(); });
+$('reset').addEventListener('click', () => { params = {...DEFAULTS}; syncAll(); persist(); schedule(); });
+
+/* ---------- 元の写真と見比べる ---------- */
+function hold(on){ if(holding === on) return; holding = on; schedule(); }
+for(const el of [$('hold'), $('frame')]){
+  el.addEventListener('pointerdown', () => hold(true));
+  for(const ev of ['pointerup','pointercancel','pointerleave']) el.addEventListener(ev, () => hold(false));
+  el.addEventListener('contextmenu', e => e.preventDefault());
+}
+$('hold').addEventListener('keydown', e => { if(e.key === ' ' || e.key === 'Enter'){ hold(true); e.preventDefault(); } });
+$('hold').addEventListener('keyup', () => hold(false));
+$('hold').addEventListener('blur', () => hold(false));
+
+/* ---------- 写真の読み込み ---------- */
+function takeFile(f){ if(!f || busy) return; source = {kind:'file', file:f, name:f.name || 'photo'}; showSource(); }
+$('file').addEventListener('change', e => { takeFile(e.target.files[0]); e.target.value = ''; });
+const frame = $('frame');
+frame.addEventListener('dragover', e => { e.preventDefault(); frame.classList.add('drop'); });
+frame.addEventListener('dragleave', () => frame.classList.remove('drop'));
+frame.addEventListener('drop', e => { e.preventDefault(); frame.classList.remove('drop'); takeFile([...e.dataTransfer.files].find(f => f.type.startsWith('image/'))); });
+window.addEventListener('paste', e => { const f = [...(e.clipboardData ? e.clipboardData.files : [])].find(f => f.type.startsWith('image/')); if(f) takeFile(f); });
+
+$('save').addEventListener('click', exportImage);
+$('resClose').addEventListener('click', () => $('result').close());
+
+/* ---------- 起動 ---------- */
+buildDial(); syncAll();
+let readyPromise = Promise.resolve();
+try{
+  renderer = new StarRenderer($('view'));
+  $('view').addEventListener('webglcontextlost', e => { e.preventDefault(); status('描画が中断されました。ページを読み込み直してください。', true); });
+  readyPromise = showSource();
+}catch(e){
+  status(e.message === 'nowebgl2' ? 'このブラウザでは動きません。WebGL2に対応したブラウザ(最近のSafari / Chrome)で開いてください。' : '初期化に失敗しました: ' + e.message, true);
+  $('save').disabled = true;
+}
+if(window.claude && typeof window.claude.use === 'function'){
+  window.claude.use('downloads').then(d => { downloads = d; }).catch(() => {});
+}
+
+/* ---------- テストフック(Playwright から確定的に操作するための口。UI とは独立) ---------- */
+window.__cf = {
+  version: 'v0',
+  ready: readyPromise,
+  params: () => ({...params}),
+  set: patch => { Object.assign(params, patch); syncAll(); persist(); if(renderer) renderer.render(shaderParams(holding ? 1 : mode)); },
+  render: () => { if(renderer) renderer.render(shaderParams(holding ? 1 : mode)); },
+  loadFile: file => { source = {kind:'file', file, name: file.name || 'photo'}; return showSource(); },
+  loadCanvas: async canvas => {
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+    return window.__cf.loadFile(new File([blob], 'synthetic.png', {type:'image/png'}));
+  },
+  sample: drawSample,
+  snapshot: () => $('view').toDataURL('image/png'),
+  readPixels: (x, y, w, h) => {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const ctx = c.getContext('2d'); ctx.drawImage($('view'), x, y, w, h, 0, 0, w, h);
+    return Array.from(ctx.getImageData(0, 0, w, h).data);
+  },
+  export: async ({format = 'jpeg', quality = 0.95} = {}) => {
+    const type = format === 'png' ? 'image/png' : 'image/jpeg';
+    const {blob, dims} = await renderExport(type, quality);
+    if(!blob) throw new Error('export failed');
+    const dataURL = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
+    return {width: dims[0], height: dims[1], dataURL};
+  }
+};
+</script>
+</body>
+</html>

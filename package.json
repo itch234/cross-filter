@@ -1,0 +1,1 @@
+{"name":"cross-filter","private":true,"scripts":{"test":"node tests/run.cjs"},"devDependencies":{"playwright-core":"^1.63.0"}}

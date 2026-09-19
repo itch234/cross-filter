@@ -32,11 +32,12 @@ async function launch() {
 }
 
 /* ページを開き、__cf.ready まで待つ。errors には pageerror と console.error が溜まる */
-async function open(file, { viewport = { width: 1280, height: 900 } } = {}) {
+async function open(file, { viewport = { width: 1280, height: 900 }, contextOptions = {}, initScript = null } = {}) {
   const server = await serve();
   const browser = await launch();
-  const context = await browser.newContext({ viewport, acceptDownloads: true });
+  const context = await browser.newContext({ viewport, acceptDownloads: true, ...contextOptions });
   const page = await context.newPage();
+  if (initScript) await page.addInitScript(initScript);
   const errors = [];
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push('console.error: ' + m.text()); });

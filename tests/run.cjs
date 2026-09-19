@@ -4,6 +4,7 @@ const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 const steps = [
   ['smoke.cjs', 'index.html'],
+  ['mobile.cjs'],
   ['profile.cjs', 'index.html'],
   ['matrix.cjs', 'index.html'],
   ['parity.cjs', 'index.html'],

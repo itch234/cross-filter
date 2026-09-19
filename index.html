@@ -63,8 +63,17 @@ button,input{font:inherit;color:inherit}
 .stage{position:sticky;top:0;z-index:5;background:var(--bg);padding-bottom:8px}
 .frame{
   background:var(--well);border-radius:6px;display:grid;place-items:center;overflow:hidden;
-  min-height:180px;touch-action:pan-y;-webkit-touch-callout:none;user-select:none;-webkit-user-select:none;
+  min-height:180px;touch-action:none;-webkit-touch-callout:none;user-select:none;-webkit-user-select:none;
+  position:relative;
 }
+/* 長押し中の目印 */
+.frame.holding::after{
+  content:"元の写真";position:absolute;top:10px;left:10px;padding:2px 10px;border-radius:999px;
+  background:rgba(0,0,0,.62);color:#fff;font-size:12.5px;font-weight:700;pointer-events:none;
+}
+#hold{touch-action:none;-webkit-touch-callout:none}
+a.btn{color:inherit;text-decoration:none}
+.hint{color:var(--muted);font-size:13px;line-height:1.6}
 .frame.drop{outline:2px dashed var(--accent);outline-offset:-6px}
 #view{display:block;max-width:100%;max-height:44vh;width:auto;height:auto}
 .stage-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:8px}
@@ -292,12 +301,13 @@ dialog p{margin:0 0 12px;font-size:14px}
 </div>
 
 <dialog id="result" aria-labelledby="resTitle">
-  <p id="resTitle">画像を長押しして「写真に追加」もできます。</p>
+  <p id="resTitle">書き出しました</p>
   <img id="resImg" alt="加工後の写真">
-  <div class="dlg-actions">
+  <p id="resHint" class="hint" hidden></p>
+  <div class="dlg-actions" id="resActions">
     <button id="resShare" class="btn" type="button" hidden>共有する</button>
-    <a id="resLink" class="btn" download>ファイルとして保存</a>
-    <button id="resClose" class="btn primary" type="button">閉じる</button>
+    <button id="resClose" class="btn quiet" type="button">閉じる</button>
+    <a id="resLink" class="btn primary" download>ファイルとして保存</a>
   </div>
 </dialog>
 
@@ -841,24 +851,44 @@ async function exportImage(){
       else if(e && e.code === 'rate_limited'){ status('保存の確認がすでに開いています。少し待ってからもう一度押してください。', true); saved = true; }
     }
   }
-  if(!saved){
-    const url = URL.createObjectURL(blob);
-    $('resImg').src = url; $('resLink').href = url; $('resLink').download = filename;
-    // 共有シート(iOS なら「画像を保存」で写真アプリに入る)。ファイル共有に対応した環境でだけ出す
-    shareFile = new File([blob], filename, {type:'image/jpeg'});
-    let canShare = false;
-    try{ canShare = !!(navigator.share && navigator.canShare && navigator.canShare({files:[shareFile]})); }catch(e){}
-    $('resShare').hidden = !canShare;
-    const dlg = $('result');
-    dlg.addEventListener('close', ()=>{ URL.revokeObjectURL(url); shareFile = null; }, {once:true});
-    dlg.showModal(); status(`書き出しました(${dims[0]}×${dims[1]})`);
+  /* スマホは共有メニューを直接開く。iPhone はそこで「画像を保存」を選ぶと写真アプリに入る
+     (a[download] はファイルアプリの「ダウンロード」に入ってしまう)。
+     共有はユーザー操作の直後でないと拒否される。書き出しに時間がかかって拒否されたら、ダイアログのボタンから開き直す */
+  const file = new File([blob], filename, {type:'image/jpeg'});
+  const phone = isPhone(), share = canShareFile(file);
+  if(!saved && phone && share){
+    try{ await navigator.share({files:[file]}); saved = true; status(`書き出しました(${dims[0]}×${dims[1]})`); }
+    catch(e){ if(e && e.name === 'AbortError'){ saved = true; status('保存をやめました。'); } }
   }
+  if(!saved) openResult(blob, file, filename, dims, phone, share);
   busy = false; $('save').disabled = false;
 }
-// share はユーザー操作の直後に同期で呼ぶ必要があるので、ボタンの click 内で呼ぶ
+function isPhone(){ try{ return matchMedia('(pointer: coarse)').matches; }catch(e){ return false; } }
+function canShareFile(file){ try{ return !!(navigator.share && navigator.canShare && navigator.canShare({files:[file]})); }catch(e){ return false; } }
+/* 保存ダイアログ。スマホで共有できるときは「写真に保存」を主ボタンにする */
+function openResult(blob, file, filename, dims, phone, share){
+  const url = URL.createObjectURL(blob);
+  const L = $('resLink'), S = $('resShare'), C = $('resClose'), hint = $('resHint');
+  $('resImg').src = url; L.href = url; L.download = filename;
+  $('resTitle').textContent = `書き出しました(${dims[0]}×${dims[1]})`;
+  shareFile = share ? file : null;
+  const photo = phone && share;
+  S.hidden = !share;
+  S.textContent = photo ? '写真に保存' : '共有する';
+  S.className = 'btn' + (photo ? ' primary' : '');
+  L.textContent = photo ? 'ファイルに保存' : 'ファイルとして保存';
+  L.className = 'btn' + (photo ? ' quiet' : ' primary');
+  hint.hidden = !photo;
+  hint.textContent = photo ? '「写真に保存」を押して、開いたメニューの「画像を保存」を選ぶと写真アプリに入ります。「ファイルに保存」はファイルアプリに入ります。' : '';
+  if(photo) $('resActions').append(L, C, S); else $('resActions').append(S, C, L);   // 主ボタンを右端に
+  const dlg = $('result');
+  dlg.addEventListener('close', ()=>{ URL.revokeObjectURL(url); shareFile = null; }, {once:true});
+  dlg.showModal(); status(`書き出しました(${dims[0]}×${dims[1]})`);
+}
+// share はユーザー操作の直後に呼ぶ必要があるので、ボタンの click 内で呼ぶ。title は付けない(iOS で画像以外の共有先が混ざる)
 $('resShare').addEventListener('click', () => {
   if(!shareFile) return;
-  navigator.share({files:[shareFile], title: shareFile.name}).catch(() => {});
+  navigator.share({files:[shareFile]}).then(() => $('result').close()).catch(() => {});
 });
 
 /* ---------- ダイヤル(フィルター枠を回す) ---------- */
@@ -920,11 +950,17 @@ document.querySelectorAll('input[name=pts]').forEach(r => r.addEventListener('ch
 $('mask').addEventListener('change', e => { mode = e.target.checked ? 2 : 0; schedule(); });
 $('reset').addEventListener('click', () => { params = {...DEFAULTS}; syncAll(); persist(); schedule(); });
 
-/* ---------- 元の写真と見比べる ---------- */
-function hold(on){ if(holding === on) return; holding = on; schedule(); }
+/* ---------- 元の写真と見比べる ----------
+   iPhone では長押し中にポインター系のイベントが打ち切られ(pointercancel / pointerleave)、すぐ元に戻っていた。
+   タッチは touch 系で扱い、touchstart で既定の動作(スクロール・拡大・選択)を止めて指が離れるまで追う。
+   マウスとペンは pointer 系。タッチ由来の pointer イベントは無視する */
+function hold(on){ if(holding === on) return; holding = on; $('frame').classList.toggle('holding', on); schedule(); }
 for(const el of [$('hold'), $('frame')]){
-  el.addEventListener('pointerdown', () => hold(true));
-  for(const ev of ['pointerup','pointercancel','pointerleave']) el.addEventListener(ev, () => hold(false));
+  el.addEventListener('touchstart', e => { if(e.touches.length === 1){ e.preventDefault(); hold(true); } else hold(false); }, {passive:false});
+  el.addEventListener('touchend', e => { if(e.touches.length === 0) hold(false); });
+  el.addEventListener('touchcancel', () => hold(false));
+  el.addEventListener('pointerdown', e => { if(e.pointerType !== 'touch') hold(true); });
+  for(const ev of ['pointerup','pointercancel','pointerleave']) el.addEventListener(ev, e => { if(e.pointerType !== 'touch') hold(false); });
   el.addEventListener('contextmenu', e => e.preventDefault());
 }
 $('hold').addEventListener('keydown', e => { if(e.key === ' ' || e.key === 'Enter'){ hold(true); e.preventDefault(); } });
@@ -963,6 +999,7 @@ window.__cf = {
   version: 'v1',
   ready: readyPromise,
   params: () => ({...params}),
+  holding: () => holding,
   set: patch => { Object.assign(params, patch); syncAll(); persist(); renderNow(); },
   render: () => renderNow(),
   loadFile: file => { source = {kind:'file', file, name: file.name || 'photo'}; return showSource(); },
